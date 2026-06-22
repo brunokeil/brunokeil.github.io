@@ -270,6 +270,7 @@ function App() {
 
   const currentState = simulationData?.history[currentTime] || { running: null, queue: [], completed: [] };
   const totalTime = simulationData?.totalTime || 0;
+  const isStopped = !isPlaying && currentTime === 0;
 
   const algOptions = [
     { value: 'FIFO', label: 'First-In, First-Out (FIFO)' },
@@ -408,7 +409,7 @@ function App() {
                   <h2>CPU</h2>
                 </div>
                 <div className="box-content">
-                  {currentState.running ? (
+                  {currentState.running && !isStopped ? (
                     <div className="active-process pulse" style={{ backgroundColor: getTaskColor(currentState.running) }}>
                       <span className="proc-label">Processo {currentState.running}</span>
                       <span className="proc-status">Executando...</span>
@@ -428,7 +429,7 @@ function App() {
                   <h2>Fila de Prontos</h2>
                 </div>
                 <div className="box-content queue-content">
-                  {currentState.queue.length > 0 ? (
+                  {currentState.queue.length > 0 && !isStopped ? (
                     currentState.queue.map((taskId, idx) => (
                       <div key={`${taskId}-${idx}`} className="queue-item slide-in" style={{ backgroundColor: getTaskColor(taskId) }}>
                         P{taskId}
@@ -530,8 +531,8 @@ function App() {
                           </td>
                           <td>
                             {isCompleted ? <span className="status-badge done">Concluído</span> : 
-                             currentState.running === task.id ? <span className="status-badge running">Executando</span> : 
-                             currentState.queue.includes(task.id) ? <span className="status-badge waiting">Aguardando</span> : 
+                             (currentState.running === task.id && !isStopped) ? <span className="status-badge running">Executando</span> : 
+                             (currentState.queue.includes(task.id) && !isStopped) ? <span className="status-badge waiting">Aguardando</span> : 
                              <span className="status-badge pending">Pendente</span>}
                           </td>
                           <td>{isCompleted ? task.completionTime : '-'}</td>

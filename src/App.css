@@ -91,6 +91,7 @@
   padding: 0.75rem 1rem;
   border-radius: 12px;
   font-size: 1rem;
+  text-align: center;
   transition: all 0.2s;
 }
 
@@ -456,7 +457,11 @@
   text-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
-.proc-label { font-size: 1.25rem; }
+.proc-label { 
+  font-size: 1.25rem; 
+  text-align: center;
+  display: block;
+}
 .proc-status { font-size: 0.8rem; opacity: 0.8; font-weight: 500; margin-top: 0.25rem; }
 
 .idle-state {
@@ -629,7 +634,7 @@
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  text-align: left;
+  text-align: center;
 }
 
 .metrics-table th {
@@ -637,12 +642,14 @@
   font-weight: 600;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--surface-border);
+  text-align: center;
 }
 
 .metrics-table td {
   padding: 1rem;
   border-bottom: 1px solid rgba(255,255,255,0.05);
   color: var(--text-primary);
+  text-align: center;
 }
 
 .process-badge {
