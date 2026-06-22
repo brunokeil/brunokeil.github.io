@@ -281,10 +281,8 @@ function App() {
     <div className="app-container">
       <header className="header glass">
         <div className="logo">
-          <RefreshCw className="logo-icon" />
-          <h1 className="gradient-text">Visualizador de Escalonamento de SO</h1>
+          <h1 className="gradient-text">Trabalho Prático SO</h1>
         </div>
-        <p className="subtitle">Algoritmos Animados de Escalonamento de CPU</p>
       </header>
 
       <div className="main-content">
@@ -453,7 +451,7 @@ function App() {
             <div className="panel glass gantt-panel">
               <div className="panel-header">
                 <BarChart2 size={20} />
-                <h2>Linha do Tempo (Gantt)</h2>
+                <h2>Linha do Tempo</h2>
               </div>
               
               <div className="gantt-chart-container">
