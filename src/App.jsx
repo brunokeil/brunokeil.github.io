@@ -55,6 +55,90 @@ function simulateFIFO(tasks) {
   return { history, executionLog, results: completed, totalTime: t };
 }
 
+function simulateFIFOAging(tasks, agingThreshold) {
+  let sortedTasks = JSON.parse(JSON.stringify(tasks)).sort((a, b) => a.arrivalTime - b.arrivalTime);
+  let history = [];
+  
+  let t = 0;
+  let completed = [];
+  let queue = []; // Each entry: { ...task, remainingTime, waitingSince, aged }
+  let currentTask = null;
+  let agingEvents = []; // Track aging promotions for display
+  
+  while(completed.length < tasks.length) {
+    let newlyArrived = sortedTasks.filter(task => task.arrivalTime === t).map(task => ({
+      ...task, 
+      remainingTime: task.burstTime, 
+      waitingSince: t,
+      aged: false
+    }));
+    queue.push(...newlyArrived);
+    
+    if (currentTask && currentTask.remainingTime === 0) {
+      completed.push({
+        ...currentTask, 
+        completionTime: t, 
+        turnaroundTime: t - currentTask.arrivalTime, 
+        waitingTime: t - currentTask.arrivalTime - currentTask.burstTime
+      });
+      currentTask = null;
+    }
+    
+    // Aging: check if any process in the queue has been waiting >= agingThreshold
+    // If so, promote the oldest-waiting one to the front of the queue
+    let promotedIds = [];
+    let agedProcesses = [];
+    let nonAgedProcesses = [];
+    
+    for (let proc of queue) {
+      const waitTime = t - proc.waitingSince;
+      if (waitTime >= agingThreshold && !proc.aged) {
+        proc.aged = true;
+        agedProcesses.push(proc);
+        promotedIds.push(proc.id);
+      } else {
+        nonAgedProcesses.push(proc);
+      }
+    }
+    
+    if (agedProcesses.length > 0) {
+      // Aged processes get promoted to the front, sorted by how long they've been waiting (longest first)
+      agedProcesses.sort((a, b) => a.waitingSince - b.waitingSince);
+      queue = [...agedProcesses, ...nonAgedProcesses];
+      agingEvents.push({ time: t, promotedIds });
+    }
+    
+    if (!currentTask && queue.length > 0) {
+      currentTask = queue.shift();
+    }
+    
+    history.push({
+      time: t,
+      running: currentTask ? currentTask.id : null,
+      queue: queue.map(q => q.id),
+      completed: completed.map(c => c.id),
+      agingEvent: promotedIds.length > 0 ? promotedIds : null
+    });
+    
+    // Update waitingSince for processes still in queue (they keep their original waitingSince)
+    if (currentTask) {
+      currentTask.remainingTime--;
+    }
+    t++;
+  }
+  
+  history.push({
+    time: t,
+    running: null,
+    queue: [],
+    completed: completed.map(c => c.id),
+    agingEvent: null
+  });
+  
+  let executionLog = generateExecutionLog(history);
+  return { history, executionLog, results: completed, totalTime: t, agingEvents };
+}
+
 function simulateRR(tasks, quantum) {
   let sortedTasks = JSON.parse(JSON.stringify(tasks)).sort((a, b) => a.arrivalTime - b.arrivalTime);
   let history = [];
@@ -114,6 +198,107 @@ function simulateRR(tasks, quantum) {
   
   let executionLog = generateExecutionLog(history);
   return { history, executionLog, results: completed, totalTime: t };
+}
+
+function simulateRRDynamic(tasks, baseQuantum) {
+  let sortedTasks = JSON.parse(JSON.stringify(tasks)).sort((a, b) => a.arrivalTime - b.arrivalTime);
+  let history = [];
+  let t = 0;
+  let completed = [];
+  let queue = []; // Each entry has remainingTime
+  let currentTask = null;
+  let quantumCounter = 0;
+  let currentQuantum = parseInt(baseQuantum);
+  let quantumChanges = []; // Track quantum adjustments for display
+  
+  const computeDynamicQuantum = (task, base, queueLength) => {
+    // Dynamic quantum formula:
+    // - If remaining time <= base quantum: quantum = remaining time (let it finish)
+    // - Otherwise: scale quantum based on ratio of remaining to original burst
+    //   Higher remaining ratio -> larger quantum (don't context-switch heavy tasks too often)
+    //   More processes in queue -> smaller quantum (be fairer)
+    if (!task) return base;
+    
+    const remainRatio = task.remainingTime / task.burstTime;
+    const queueFactor = Math.max(1, queueLength);
+    
+    // Base quantum adjusted: scale up for tasks with more remaining work, scale down when queue is busy
+    let dynQ = Math.round(base * (0.5 + remainRatio) / Math.sqrt(queueFactor));
+    
+    // Clamp between 1 and 2x base quantum
+    dynQ = Math.max(1, Math.min(dynQ, base * 2));
+    
+    // If task can finish within the quantum, just let it
+    if (task.remainingTime <= dynQ) {
+      dynQ = task.remainingTime;
+    }
+    
+    return dynQ;
+  };
+  
+  while(completed.length < tasks.length) {
+    let newlyArrived = sortedTasks.filter(task => task.arrivalTime === t).map(task => ({
+      ...task, 
+      remainingTime: task.burstTime
+    }));
+    
+    if (currentTask && currentTask.remainingTime === 0) {
+      completed.push({
+        ...currentTask, 
+        completionTime: t, 
+        turnaroundTime: t - currentTask.arrivalTime, 
+        waitingTime: t - currentTask.arrivalTime - currentTask.burstTime
+      });
+      currentTask = null;
+      quantumCounter = 0;
+    }
+    
+    if (currentTask && quantumCounter >= currentQuantum) {
+      queue.push(currentTask);
+      currentTask = null;
+      quantumCounter = 0;
+    }
+    
+    queue.push(...newlyArrived);
+    
+    if (!currentTask && queue.length > 0) {
+      currentTask = queue.shift();
+      quantumCounter = 0;
+      // Calculate dynamic quantum for this new task
+      let newQuantum = computeDynamicQuantum(currentTask, parseInt(baseQuantum), queue.length);
+      if (newQuantum !== currentQuantum) {
+        quantumChanges.push({ time: t, processId: currentTask.id, oldQuantum: currentQuantum, newQuantum });
+      }
+      currentQuantum = newQuantum;
+    }
+    
+    history.push({
+      time: t,
+      running: currentTask ? currentTask.id : null,
+      queue: queue.map(q => q.id),
+      completed: completed.map(c => c.id),
+      currentQuantum: currentQuantum,
+      quantumCounter: quantumCounter
+    });
+    
+    if (currentTask) {
+      currentTask.remainingTime--;
+      quantumCounter++;
+    }
+    t++;
+  }
+  
+  history.push({
+    time: t,
+    running: null,
+    queue: [],
+    completed: completed.map(c => c.id),
+    currentQuantum: currentQuantum,
+    quantumCounter: 0
+  });
+  
+  let executionLog = generateExecutionLog(history);
+  return { history, executionLog, results: completed, totalTime: t, quantumChanges };
 }
 
 function generateExecutionLog(history) {
@@ -192,6 +377,7 @@ function App() {
   ]);
   const [algorithm, setAlgorithm] = useState('FIFO');
   const [quantum, setQuantum] = useState(2);
+  const [agingThreshold, setAgingThreshold] = useState(5);
   const [playbackSpeed, setPlaybackSpeed] = useState(500); 
   
   const [simulationData, setSimulationData] = useState(null);
@@ -225,8 +411,12 @@ function App() {
     let result;
     if (algorithm === 'FIFO') {
       result = simulateFIFO(tasks);
-    } else {
+    } else if (algorithm === 'FIFO_AGING') {
+      result = simulateFIFOAging(tasks, agingThreshold);
+    } else if (algorithm === 'RR') {
       result = simulateRR(tasks, quantum);
+    } else if (algorithm === 'RR_DYNAMIC') {
+      result = simulateRRDynamic(tasks, quantum);
     }
     setSimulationData(result);
     setCurrentTime(0);
@@ -250,7 +440,7 @@ function App() {
     if (simulationData && !isPlaying) {
       prepareSimulation();
     }
-  }, [tasks, algorithm, quantum]);
+  }, [tasks, algorithm, quantum, agingThreshold]);
   
   useEffect(() => {
     if (isPlaying && simulationData && currentTime < simulationData.totalTime) {
@@ -274,7 +464,9 @@ function App() {
 
   const algOptions = [
     { value: 'FIFO', label: 'First-In, First-Out (FIFO)' },
-    { value: 'RR', label: 'Round Robin (RR)' }
+    { value: 'FIFO_AGING', label: 'FIFO com Aging' },
+    { value: 'RR', label: 'Round Robin (RR)' },
+    { value: 'RR_DYNAMIC', label: 'Round Robin com Quantum Dinâmico' }
   ];
 
   return (
@@ -303,9 +495,9 @@ function App() {
               />
             </div>
             
-            {algorithm === 'RR' && (
+            {(algorithm === 'RR' || algorithm === 'RR_DYNAMIC') && (
               <div className="form-group slide-down">
-                <label>Quantum de Tempo</label>
+                <label>{algorithm === 'RR_DYNAMIC' ? 'Quantum Base' : 'Quantum de Tempo'}</label>
                 <input 
                   type="number" 
                   min="1" 
@@ -314,6 +506,24 @@ function App() {
                   className="input-field"
                   disabled={isPlaying}
                 />
+                {algorithm === 'RR_DYNAMIC' && (
+                  <span className="input-hint">O quantum será ajustado dinamicamente com base no tempo restante do processo e no tamanho da fila.</span>
+                )}
+              </div>
+            )}
+            
+            {algorithm === 'FIFO_AGING' && (
+              <div className="form-group slide-down">
+                <label>Limiar de Aging (ciclos)</label>
+                <input 
+                  type="number" 
+                  min="1" 
+                  value={agingThreshold}
+                  onChange={(e) => setAgingThreshold(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="input-field"
+                  disabled={isPlaying}
+                />
+                <span className="input-hint">Processos que esperam mais do que este número de ciclos são promovidos para o início da fila.</span>
               </div>
             )}
             
@@ -399,18 +609,25 @@ function App() {
           </div>
 
           {simulationData ? (
+            <>
             <div className="animation-grid">
               {/* CPU Status */}
               <div className="panel glass animation-box cpu-box">
                 <div className="panel-header">
                   <Cpu size={20} className={currentState.running ? 'pulse-icon text-accent' : ''} />
                   <h2>CPU</h2>
+                  {algorithm === 'RR_DYNAMIC' && currentState.currentQuantum && !isStopped && (
+                    <span className="quantum-badge">Q={currentState.currentQuantum}</span>
+                  )}
                 </div>
                 <div className="box-content">
                   {currentState.running && !isStopped ? (
                     <div className="active-process pulse" style={{ backgroundColor: getTaskColor(currentState.running) }}>
                       <span className="proc-label">Processo {currentState.running}</span>
                       <span className="proc-status">Executando...</span>
+                      {algorithm === 'RR_DYNAMIC' && (
+                        <span className="proc-quantum-counter">{currentState.quantumCounter}/{currentState.currentQuantum}</span>
+                      )}
                     </div>
                   ) : (
                     <div className="idle-state">
@@ -429,8 +646,11 @@ function App() {
                 <div className="box-content queue-content">
                   {currentState.queue.length > 0 && !isStopped ? (
                     currentState.queue.map((taskId, idx) => (
-                      <div key={`${taskId}-${idx}`} className="queue-item slide-in" style={{ backgroundColor: getTaskColor(taskId) }}>
+                      <div key={`${taskId}-${idx}`} className={`queue-item slide-in ${currentState.agingEvent && currentState.agingEvent.includes(taskId) ? 'aged-item' : ''}`} style={{ backgroundColor: getTaskColor(taskId) }}>
                         P{taskId}
+                        {currentState.agingEvent && currentState.agingEvent.includes(taskId) && (
+                          <span className="aging-indicator">⬆</span>
+                        )}
                       </div>
                     ))
                   ) : (
@@ -439,6 +659,55 @@ function App() {
                 </div>
               </div>
             </div>
+
+            {/* Algorithm-specific info panel */}
+            {(algorithm === 'FIFO_AGING' || algorithm === 'RR_DYNAMIC') && !isStopped && (
+              <div className="panel glass algo-info-panel">
+                <div className="panel-header">
+                  <Info size={20} />
+                  <h2>{algorithm === 'FIFO_AGING' ? 'Eventos de Aging' : 'Quantum Dinâmico'}</h2>
+                </div>
+                <div className="algo-info-content">
+                  {algorithm === 'FIFO_AGING' && (
+                    <>
+                      {simulationData.agingEvents && simulationData.agingEvents.filter(e => e.time <= currentTime).length > 0 ? (
+                        <div className="event-list">
+                          {simulationData.agingEvents.filter(e => e.time <= currentTime).map((event, idx) => (
+                            <div key={idx} className="event-item aging-event-item slide-in">
+                              <span className="event-time">t={event.time}</span>
+                              <span className="event-desc">
+                                {event.promotedIds.map(id => `P${id}`).join(', ')} promovido{event.promotedIds.length > 1 ? 's' : ''} por aging
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="empty-text">Nenhum evento de aging até agora</span>
+                      )}
+                    </>
+                  )}
+                  {algorithm === 'RR_DYNAMIC' && (
+                    <>
+                      {simulationData.quantumChanges && simulationData.quantumChanges.filter(e => e.time <= currentTime).length > 0 ? (
+                        <div className="event-list">
+                          {simulationData.quantumChanges.filter(e => e.time <= currentTime).map((event, idx) => (
+                            <div key={idx} className="event-item quantum-event-item slide-in">
+                              <span className="event-time">t={event.time}</span>
+                              <span className="event-desc">
+                                P{event.processId}: quantum {event.oldQuantum} → {event.newQuantum}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="empty-text">Nenhuma alteração de quantum até agora</span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+            </>
           ) : (
             <div className="empty-state glass">
               <Play size={48} className="pulse text-primary mb-4" />
