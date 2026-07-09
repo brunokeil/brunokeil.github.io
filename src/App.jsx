@@ -87,26 +87,24 @@ function simulateFIFOAging(tasks, agingThreshold) {
     // Aging: check if any process in the queue has been waiting >= agingThreshold
     // If so, promote the oldest-waiting one to the front of the queue
     let promotedIds = [];
-    let agedProcesses = [];
-    let nonAgedProcesses = [];
     
     for (let proc of queue) {
       const waitTime = t - proc.waitingSince;
       if (waitTime >= agingThreshold && !proc.aged) {
         proc.aged = true;
-        agedProcesses.push(proc);
         promotedIds.push(proc.id);
-      } else {
-        nonAgedProcesses.push(proc);
       }
     }
     
-    if (agedProcesses.length > 0) {
-      // Aged processes get promoted to the front, sorted by how long they've been waiting (longest first)
-      agedProcesses.sort((a, b) => a.waitingSince - b.waitingSince);
-      queue = [...agedProcesses, ...nonAgedProcesses];
+    if (promotedIds.length > 0) {
       agingEvents.push({ time: t, promotedIds });
     }
+    queue.sort((a, b) => {
+      if (a.aged && !b.aged) return -1;
+      if (!a.aged && b.aged) return 1;
+      
+      return a.waitingSince - b.waitingSince;
+    });
     
     if (!currentTask && queue.length > 0) {
       currentTask = queue.shift();
